@@ -11,6 +11,79 @@
 <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script>
+// Google Charts QR Code Generator (fallback if qrcode.js fails)
+window.generateQRCodeGoogle = function(element, text, size) {
+  size = size || 100;
+  var url = 'https://chart.googleapis.com/chart?cht=qr&chs=' + size + 'x' + size + '&chl=' + encodeURIComponent(text);
+  
+  if (element.tagName === 'IMG') {
+    element.src = url;
+    element.style.width = size + 'px';
+    element.style.height = size + 'px';
+  } else if (element.tagName === 'CANVAS') {
+    var img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = function() {
+      try {
+        var ctx = element.getContext('2d');
+        element.width = size;
+        element.height = size;
+        ctx.drawImage(img, 0, 0, size, size);
+      } catch(e) {
+        console.error('QR render error:', e);
+      }
+    };
+    img.onerror = function() {
+      // Fallback: create colored square
+      var ctx = element.getContext('2d');
+      element.width = size;
+      element.height = size;
+      ctx.fillStyle = '#eee';
+      ctx.fillRect(0, 0, size, size);
+      ctx.fillStyle = '#333';
+      ctx.font = '10px monospace';
+      ctx.fillText('QR: ' + text.substring(0,10), 5, size/2);
+    };
+    img.src = url;
+  } else {
+    var img = document.createElement('img');
+    img.src = url;
+    img.style.width = size + 'px';
+    img.style.height = size + 'px';
+    img.alt = 'QR Code: ' + text;
+    element.innerHTML = '';
+    element.appendChild(img);
+  }
+};
+
+// Enhanced QR Code with auto-fallback
+window.generateQRCodeSafe = function(element, text, size) {
+  size = size || 100;
+  
+  // Try qrcode.js first
+  if (window.QRCode && element.tagName === 'CANVAS') {
+    try {
+      QRCode.toCanvas(element, text, {
+        width: size,
+        margin: 1,
+        color: {dark:'#000', light:'#fff'}
+      }, function(error) {
+        if (error) {
+          console.warn('QRCode.js failed, using Google Charts:', error);
+          generateQRCodeGoogle(element, text, size);
+        }
+      });
+      return;
+    } catch(e) {
+      console.warn('QRCode.js exception, using Google Charts:', e);
+    }
+  }
+  
+  // Fallback to Google Charts
+  generateQRCodeGoogle(element, text, size);
+};
+</script>
 <!-- Firebase SDK (loaded statically to avoid cross-origin Script error) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
@@ -302,6 +375,48 @@ tr.rop-manual-row td{background:rgba(255,184,0,0.04)}
 /* Prevent pull-to-refresh */
 html{overscroll-behavior:none}
 body{overscroll-behavior:none}
+
+/* iOS Safari specific fixes */
+@supports (-webkit-touch-callout: none) {
+  body {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-user-select: none;
+  }
+  input, textarea, select {
+    -webkit-user-select: text;
+    font-size: 16px; /* Prevent zoom on focus */
+  }
+}
+
+/* Android Chrome specific */
+@media screen and (-webkit-min-device-pixel-ratio:0) {
+  select, input, textarea {
+    font-size: 16px; /* Prevent zoom */
+  }
+}
+
+/* Better checkbox/radio visibility */
+@media (max-width: 768px) {
+  input[type="checkbox"], input[type="radio"] {
+    min-width: 20px;
+    min-height: 20px;
+    -webkit-appearance: checkbox;
+    appearance: auto;
+  }
+  input[type="radio"] {
+    -webkit-appearance: radio;
+  }
+}
+
+/* Prevent double-tap zoom */
+* {
+  touch-action: manipulation;
+}
+
+/* iOS momentum scrolling */
+.sidebar, .content, .modal-body {
+  -webkit-overflow-scrolling: touch;
+}
 </style>
 
 <style>
@@ -22862,7 +22977,7 @@ window.renderBarcodePreview = function(){
     if((cfg.type==='qr'||cfg.type==='both') && window.QRCode){
       var canEl = document.getElementById('qr_'+safeId);
       if(canEl){
-        try{ QRCode.toCanvas(canEl, code, {width:cfg.dims.qrSz,margin:1,color:{dark:'#000',light:'#fff'}}); }catch(e){}
+        generateQRCodeSafe(canEl, code, cfg.dims.qrSz);
       }
     }
   });
@@ -22891,7 +23006,14 @@ window.bcPrint = function(){
     html += 'document.querySelectorAll("svg[id^=\'bc_\']").forEach(function(el){try{JsBarcode(el,el.parentElement.getAttribute("data-code")||el.id.replace("bc_","").replace(/_/g,"-"),{format:"CODE128",height:'+cfg.dims.bcH+',displayValue:false,margin:1});}catch(e){}});';
   }
   if(cfg.type==='qr'||cfg.type==='both'){
-    html += 'document.querySelectorAll("canvas[id^=\'qr_\']").forEach(function(el){var code=el.closest(".bc-label").getAttribute("data-code");try{QRCode.toCanvas(el,code,{width:'+cfg.dims.qrSz+',margin:1});}catch(e){}});';
+    html += 'document.querySelectorAll("canvas[id^=\\'qr_\\']").forEach(function(el){';
+    html += 'var code=el.closest(".bc-label").getAttribute("data-code");';
+    html += 'var size='+cfg.dims.qrSz+';';
+    html += 'var url="https://chart.googleapis.com/chart?cht=qr&chs="+size+"x"+size+"&chl="+encodeURIComponent(code);';
+    html += 'var img=new Image();img.crossOrigin="anonymous";';
+    html += 'img.onload=function(){try{var ctx=el.getContext("2d");el.width=size;el.height=size;ctx.drawImage(img,0,0,size,size);}catch(e){}};';
+    html += 'img.src=url;';
+    html += '});';
   }
   html += 'setTimeout(function(){window.print();},800);};';
   html += '<\/script></body></html>';
@@ -22922,7 +23044,14 @@ window.bcDownload = function(){
     html += 'document.querySelectorAll("svg[id^=\'bc_\']").forEach(function(el){try{JsBarcode(el,el.closest(".bc-label").getAttribute("data-code"),{format:"CODE128",height:'+cfg.dims.bcH+',displayValue:false,margin:1});}catch(e){}});';
   }
   if(cfg.type==='qr'||cfg.type==='both'){
-    html += 'document.querySelectorAll("canvas[id^=\'qr_\']").forEach(function(el){var code=el.closest(".bc-label").getAttribute("data-code");try{QRCode.toCanvas(el,code,{width:'+cfg.dims.qrSz+',margin:1});}catch(e){}});';
+    html += 'document.querySelectorAll("canvas[id^=\\'qr_\\']").forEach(function(el){';
+    html += 'var code=el.closest(".bc-label").getAttribute("data-code");';
+    html += 'var size='+cfg.dims.qrSz+';';
+    html += 'var url="https://chart.googleapis.com/chart?cht=qr&chs="+size+"x"+size+"&chl="+encodeURIComponent(code);';
+    html += 'var img=new Image();img.crossOrigin="anonymous";';
+    html += 'img.onload=function(){try{var ctx=el.getContext("2d");el.width=size;el.height=size;ctx.drawImage(img,0,0,size,size);}catch(e){}};';
+    html += 'img.src=url;';
+    html += '});';
   }
   html += '};<\/script></body></html>';
   var blob = new Blob([html],{type:'text/html;charset=utf-8'});
@@ -24281,5 +24410,777 @@ window._fbEngine = { initFirebase, persistAll, loadAllFromFirebase, _fbConnected
 
 })();
 </script>
+</body>
+</html><!-- SAP-STYLE MASTER DATA ENHANCEMENT -->
+<script>
+// SAP Material Master Fields Structure
+var SAP_MATERIAL_FIELDS = {
+  // Basic Data
+  materialNumber: '',      // MATNR (Material Number)
+  materialDescription: '', // MAKTX (Material Description)
+  oldMaterialNumber: '',   // BISMT (Old Material Number)
+  materialType: '',        // MTART (Material Type: ROH=Raw, HALB=Semi, FERT=Finished, HAWA=Trading)
+  industryStandardDescription: '', // MAKTG
+  baseUnitOfMeasure: '',   // MEINS
+  materialGroup: '',       // MATKL
+  division: '',            // SPART
+  
+  // Classification
+  abcIndicator: '',        // ABC Classification
+  itemCategoryGroup: '',   // Item Category Group
+  
+  // Purchasing
+  purchasingGroup: '',     // EKGRP
+  plant: '',               // WERKS
+  storageLocation: '',     // LGORT
+  manufacturerPartNumber: '', // MPN
+  manufacturer: '',        // MFRNR
+  
+  // MRP Data
+  mrpType: '',            // DISMM (PD=Planning, VB=Consumption, ND=No Planning)
+  mrpController: '',      // DISPO
+  lotSizingProcedure: '', // DISLS (EX=Lot-for-Lot, FX=Fixed, PE=Period)
+  minimumLotSize: 0,      // BSTMI
+  maximumLotSize: 0,      // BSTMA
+  fixedLotSize: 0,        // BSTFE
+  roundingValue: 0,       // BSTRF
+  assemblyScrapPercent: 0, // AUSSS
+  
+  // Procurement
+  procurementType: 'E',   // BESKZ (E=In-house, F=External, X=Both)
+  specialProcurementType: '', // SOBSL
+  productionStorageLocation: '', // LGPRO
+  
+  // Inventory Management
+  valuationClass: '',     // BKLAS
+  priceControl: 'S',      // VPRSV (S=Standard, V=Moving Average)
+  standardPrice: 0,       // STPRS
+  movingAveragePrice: 0,  // VERPR
+  priceUnit: 1,           // PEINH
+  
+  // Quality Management
+  inspectionSetupRequired: false, // QM Inspection
+  qualityManagementControl: '',
+  
+  // Availability Check
+  checkingGroup: '',      // Availability check
+  checkingRule: '',
+  
+  // Accounting
+  valuationType: '',      // BWTAR
+  valuationCategory: '',  // BWTTY
+  splitValuation: false,
+  
+  // Storage
+  temperatureConditions: '', // Temperature requirements
+  containerRequirements: '', // Container specs
+  storageConditions: '',     // Storage conditions
+  
+  // Shelf Life
+  totalShelfLife: 0,      // MHDHB (days)
+  minimumRemainingShelfLife: 0, // MHDRZ
+  periodIndicatorForShelfLife: 'D', // D=Days, M=Months
+  
+  // Unit of Measure
+  alternativeUOM: [],     // Alternative units
+  
+  // Sales
+  salesOrganization: '',  // VKORG
+  distributionChannel: '', // VTWEG
+  salesUnit: '',          // VRKME
+  deliveryUnit: '',       // AUSME
+  minimumOrderQuantity: 0, // MINBES
+  itemGroup: '',          // KONDM
+  
+  // Costing
+  costingLotSize: 0,      // LOSGR
+  varianceKey: '',        // ABKRS
+  
+  // Work Scheduling
+  productionSchedulingProfile: '', // DZEIT
+  inHouseProductionTime: 0, // PLIFZ (days)
+  
+  // Additional Data
+  crossPlantConfigurableMaterial: '', // KZKFG
+  laboratoryDesignOffice: '',
+  
+  // Dates
+  createdDate: '',        // ERSDA
+  createdBy: '',          // ERNAM
+  changedDate: '',        // AEDAT
+  changedBy: '',          // AENAM
+  
+  // Flags
+  deletionFlag: false,    // LVORM
+  blocked: false,         // Material Blocked
+  
+  // Custom Fields
+  customField1: '',
+  customField2: '',
+  customField3: '',
+  customField4: '',
+  customField5: ''
+};
+
+// Initialize enhanced item with SAP fields
+window.createSAPItem = function(basicData) {
+  return Object.assign({}, SAP_MATERIAL_FIELDS, basicData, {
+    // Amigo-MRP specific
+    code: basicData.code || '',
+    name: basicData.name || '',
+    unit: basicData.unit || 'PCS',
+    price: basicData.price || 0,
+    oh: basicData.oh || 0,
+    warehouse: basicData.warehouse || '',
+    abc: basicData.abc || 'C',
+    avg: basicData.avg || 0,
+    
+    // MRP fields mapping
+    leadTime: basicData.leadTime || 0,
+    safetyStock: basicData.safetyStock || 0,
+    reorderPoint: basicData.reorderPoint || 0,
+    moq: basicData.moq || 1,
+    reorderQty: basicData.reorderQty || 0,
+    
+    // Vendor
+    vendorCode: basicData.vendorCode || '',
+    vendorName: basicData.vendorName || '',
+    
+    // Additional
+    note: basicData.note || '',
+    itemGroup: basicData.itemGroup || '',
+    shelf: basicData.shelf || '',
+    binLocation: basicData.binLocation || '',
+    
+    // Dates
+    createdDate: basicData.createdDate || new Date().toISOString().slice(0,10),
+    lastModified: new Date().toISOString()
+  });
+};
+
+// Material Type definitions (SAP standard)
+var SAP_MATERIAL_TYPES = {
+  'ROH': 'วัตถุดิบ (Raw Material)',
+  'HALB': 'กึ่งสำเร็จรูป (Semi-Finished)',
+  'FERT': 'สินค้าสำเร็จรูป (Finished Product)',
+  'HAWA': 'สินค้าค้าขาย (Trading Goods)',
+  'VERP': 'บรรจุภัณฑ์ (Packaging)',
+  'UNBW': 'ไม่ประเมินมูลค่า (Non-Valuated)',
+  'NLAG': 'ไม่สต็อก (Non-Stock)',
+  'DIEN': 'บริการ (Services)',
+  'PIPE': 'Pipeline Material',
+  'CONT': 'Returnable Container'
+};
+
+// MRP Type definitions
+var SAP_MRP_TYPES = {
+  'PD': 'MRP (Planning)',
+  'VB': 'ตามการใช้ (Consumption-Based)',
+  'VV': 'Forecast-Based',
+  'VM': 'Manual Reorder Point',
+  'ND': 'ไม่วางแผน (No Planning)',
+  'R1': 'Time-Phased Planning'
+};
+
+// Lot Sizing Procedures
+var SAP_LOT_SIZING = {
+  'EX': 'Lot-for-Lot',
+  'FX': 'Fixed Lot Size',
+  'PE': 'Periodic Lot Size',
+  'WB': 'Weekly Lot Size',
+  'MB': 'Monthly Lot Size',
+  'HB': 'Lot Size according to Demand',
+  'PK': 'Replenish to Max Stock'
+};
+
+// Procurement Types
+var SAP_PROCUREMENT_TYPES = {
+  'E': 'ผลิตเอง (In-house Production)',
+  'F': 'จัดซื้อภายนอก (External Procurement)',
+  'X': 'ทั้งสองแบบ (Both)'
+};
+
+// Enhanced Master Data form with SAP fields
+window.openSAPMasterDataEditor = function(itemCode) {
+  var item = itemCode ? DB.find(function(i){return i.code===itemCode;}) : null;
+  var isNew = !item;
+  
+  if (!item) {
+    item = createSAPItem({});
+  }
+  
+  var modal = document.createElement('div');
+  modal.className = 'modal modal-lg';
+  modal.id = 'sapMasterModal';
+  modal.style.display = 'flex';
+  
+  modal.innerHTML = `
+    <div class="modal-content" style="max-width:1200px;max-height:90vh">
+      <div class="modal-header">
+        <div class="modal-title">${isNew ? '🆕 สร้างรายการใหม่' : '✏️ แก้ไข: ' + item.code}</div>
+        <span class="modal-close" onclick="closeModal('sapMasterModal')">&times;</span>
+      </div>
+      <div class="modal-body" style="max-height:calc(90vh - 140px);overflow-y:auto">
+        
+        <!-- SAP-style Tabs -->
+        <div class="tabs" style="margin-bottom:16px">
+          <div class="tab active" onclick="switchSAPTab('basic',this)">📋 Basic Data</div>
+          <div class="tab" onclick="switchSAPTab('mrp',this)">📊 MRP</div>
+          <div class="tab" onclick="switchSAPTab('purchasing',this)">🛒 Purchasing</div>
+          <div class="tab" onclick="switchSAPTab('accounting',this)">💰 Accounting</div>
+          <div class="tab" onclick="switchSAPTab('sales',this)">💼 Sales</div>
+          <div class="tab" onclick="switchSAPTab('warehouse',this)">🏢 Warehouse</div>
+        </div>
+        
+        <!-- Basic Data Tab -->
+        <div id="sapTabBasic">
+          <div class="form-grid" style="grid-template-columns:repeat(3,1fr)">
+            <div class="form-group">
+              <label>รหัสสินค้า (Material Number) *</label>
+              <input type="text" id="sapCode" value="${item.code}" ${!isNew?'disabled':''}>
+            </div>
+            <div class="form-group">
+              <label>ชื่อสินค้า (Description) *</label>
+              <input type="text" id="sapName" value="${item.name}">
+            </div>
+            <div class="form-group">
+              <label>ประเภทวัสดุ (Material Type)</label>
+              <select id="sapMatType">
+                <option value="">-- เลือก --</option>
+                ${Object.keys(SAP_MATERIAL_TYPES).map(function(k){
+                  return '<option value="'+k+'" '+(item.materialType===k?'selected':'')+'>'+SAP_MATERIAL_TYPES[k]+'</option>';
+                }).join('')}
+              </select>
+            </div>
+            <div class="form-group">
+              <label>หน่วยนับพื้นฐาน (Base UOM)</label>
+              <input type="text" id="sapUnit" value="${item.unit}" placeholder="PCS, KG, M">
+            </div>
+            <div class="form-group">
+              <label>กลุ่มวัสดุ (Material Group)</label>
+              <input type="text" id="sapMatGroup" value="${item.materialGroup||''}">
+            </div>
+            <div class="form-group">
+              <label>ABC Indicator</label>
+              <select id="sapABC">
+                <option value="A" ${item.abc==='A'?'selected':''}>A - สำคัญมาก</option>
+                <option value="B" ${item.abc==='B'?'selected':''}>B - สำคัญปานกลาง</option>
+                <option value="C" ${item.abc==='C'?'selected':''}>C - สำคัญน้อย</option>
+                <option value="D" ${item.abc==='D'?'selected':''}>D - ไม่สำคัญ</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Plant</label>
+              <input type="text" id="sapPlant" value="${item.plant||'1000'}" placeholder="1000">
+            </div>
+            <div class="form-group">
+              <label>Storage Location</label>
+              <input type="text" id="sapSLoc" value="${item.storageLocation||'0001'}" placeholder="0001">
+            </div>
+            <div class="form-group">
+              <label>รหัสเดิม (Old Material No.)</label>
+              <input type="text" id="sapOldCode" value="${item.oldMaterialNumber||''}">
+            </div>
+          </div>
+        </div>
+        
+        <!-- MRP Tab -->
+        <div id="sapTabMRP" style="display:none">
+          <div class="form-grid" style="grid-template-columns:repeat(3,1fr)">
+            <div class="form-group">
+              <label>MRP Type</label>
+              <select id="sapMRPType">
+                ${Object.keys(SAP_MRP_TYPES).map(function(k){
+                  return '<option value="'+k+'" '+(item.mrpType===k?'selected':'')+'>'+k+' - '+SAP_MRP_TYPES[k]+'</option>';
+                }).join('')}
+              </select>
+            </div>
+            <div class="form-group">
+              <label>MRP Controller</label>
+              <input type="text" id="sapMRPCtrl" value="${item.mrpController||'001'}">
+            </div>
+            <div class="form-group">
+              <label>Lot Sizing Procedure</label>
+              <select id="sapLotSize">
+                ${Object.keys(SAP_LOT_SIZING).map(function(k){
+                  return '<option value="'+k+'" '+(item.lotSizingProcedure===k?'selected':'')+'>'+k+' - '+SAP_LOT_SIZING[k]+'</option>';
+                }).join('')}
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Minimum Lot Size</label>
+              <input type="number" id="sapMinLot" value="${item.minimumLotSize||0}" min="0">
+            </div>
+            <div class="form-group">
+              <label>Maximum Lot Size</label>
+              <input type="number" id="sapMaxLot" value="${item.maximumLotSize||0}" min="0">
+            </div>
+            <div class="form-group">
+              <label>Fixed Lot Size</label>
+              <input type="number" id="sapFixLot" value="${item.fixedLotSize||0}" min="0">
+            </div>
+            <div class="form-group">
+              <label>Rounding Value</label>
+              <input type="number" id="sapRound" value="${item.roundingValue||0}" min="0">
+            </div>
+            <div class="form-group">
+              <label>Safety Stock</label>
+              <input type="number" id="sapSafety" value="${item.safetyStock||0}" min="0">
+            </div>
+            <div class="form-group">
+              <label>Reorder Point</label>
+              <input type="number" id="sapROP" value="${item.reorderPoint||0}" min="0">
+            </div>
+            <div class="form-group">
+              <label>Planned Delivery Time (วัน)</label>
+              <input type="number" id="sapLeadTime" value="${item.leadTime||0}" min="0">
+            </div>
+            <div class="form-group">
+              <label>In-house Production Time (วัน)</label>
+              <input type="number" id="sapProdTime" value="${item.inHouseProductionTime||0}" min="0">
+            </div>
+            <div class="form-group">
+              <label>Assembly Scrap (%)</label>
+              <input type="number" id="sapScrap" value="${item.assemblyScrapPercent||0}" min="0" max="100" step="0.1">
+            </div>
+          </div>
+        </div>
+        
+        <!-- Purchasing Tab -->
+        <div id="sapTabPurchasing" style="display:none">
+          <div class="form-grid" style="grid-template-columns:repeat(3,1fr)">
+            <div class="form-group">
+              <label>Procurement Type</label>
+              <select id="sapProcType">
+                ${Object.keys(SAP_PROCUREMENT_TYPES).map(function(k){
+                  return '<option value="'+k+'" '+(item.procurementType===k?'selected':'')+'>'+k+' - '+SAP_PROCUREMENT_TYPES[k]+'</option>';
+                }).join('')}
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Purchasing Group</label>
+              <input type="text" id="sapPurchGrp" value="${item.purchasingGroup||''}">
+            </div>
+            <div class="form-group">
+              <label>Vendor (ผู้ขาย)</label>
+              <select id="sapVendor">
+                <option value="">-- เลือกผู้ขาย --</option>
+                ${(window.vendors||[]).map(function(v){
+                  return '<option value="'+v.code+'" '+(item.vendorCode===v.code?'selected':'')+'>'+v.code+' - '+v.name+'</option>';
+                }).join('')}
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Manufacturer</label>
+              <input type="text" id="sapMfr" value="${item.manufacturer||''}">
+            </div>
+            <div class="form-group">
+              <label>Manufacturer Part Number</label>
+              <input type="text" id="sapMPN" value="${item.manufacturerPartNumber||''}">
+            </div>
+            <div class="form-group">
+              <label>Standard Price</label>
+              <input type="number" id="sapStdPrice" value="${item.standardPrice||item.price||0}" min="0" step="0.01">
+            </div>
+            <div class="form-group">
+              <label>MOQ (Minimum Order Qty)</label>
+              <input type="number" id="sapMOQ" value="${item.moq||1}" min="1">
+            </div>
+            <div class="form-group">
+              <label>Price Unit</label>
+              <input type="number" id="sapPriceUnit" value="${item.priceUnit||1}" min="1">
+            </div>
+          </div>
+        </div>
+        
+        <!-- Accounting Tab -->
+        <div id="sapTabAccounting" style="display:none">
+          <div class="form-grid" style="grid-template-columns:repeat(3,1fr)">
+            <div class="form-group">
+              <label>Valuation Class</label>
+              <input type="text" id="sapValClass" value="${item.valuationClass||'3000'}">
+            </div>
+            <div class="form-group">
+              <label>Price Control</label>
+              <select id="sapPriceCtrl">
+                <option value="S" ${item.priceControl==='S'?'selected':''}>S - Standard Price</option>
+                <option value="V" ${item.priceControl==='V'?'selected':''}>V - Moving Average</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Current Stock Value</label>
+              <input type="number" id="sapStockVal" value="${(item.oh||0)*(item.price||0)}" disabled>
+            </div>
+            <div class="form-group">
+              <label>Moving Average Price</label>
+              <input type="number" id="sapMAP" value="${item.movingAveragePrice||item.price||0}" step="0.01">
+            </div>
+            <div class="form-group">
+              <label>Costing Lot Size</label>
+              <input type="number" id="sapCostLot" value="${item.costingLotSize||0}" min="0">
+            </div>
+            <div class="form-group">
+              <label>Variance Key</label>
+              <input type="text" id="sapVarKey" value="${item.varianceKey||''}">
+            </div>
+          </div>
+        </div>
+        
+        <!-- Sales Tab -->
+        <div id="sapTabSales" style="display:none">
+          <div class="form-grid" style="grid-template-columns:repeat(3,1fr)">
+            <div class="form-group">
+              <label>Sales Organization</label>
+              <input type="text" id="sapSalesOrg" value="${item.salesOrganization||'1000'}">
+            </div>
+            <div class="form-group">
+              <label>Distribution Channel</label>
+              <input type="text" id="sapDistChan" value="${item.distributionChannel||'10'}">
+            </div>
+            <div class="form-group">
+              <label>Sales Unit</label>
+              <input type="text" id="sapSalesUnit" value="${item.salesUnit||item.unit}">
+            </div>
+            <div class="form-group">
+              <label>Minimum Order Quantity</label>
+              <input type="number" id="sapMinOrder" value="${item.minimumOrderQuantity||1}" min="1">
+            </div>
+            <div class="form-group">
+              <label>Item Group</label>
+              <input type="text" id="sapItemGroup" value="${item.itemGroup||''}">
+            </div>
+          </div>
+        </div>
+        
+        <!-- Warehouse Tab -->
+        <div id="sapTabWarehouse" style="display:none">
+          <div class="form-grid" style="grid-template-columns:repeat(3,1fr)">
+            <div class="form-group">
+              <label>Stock On Hand</label>
+              <input type="number" id="sapOH" value="${item.oh||0}" min="0">
+            </div>
+            <div class="form-group">
+              <label>Bin Location / Shelf</label>
+              <input type="text" id="sapBin" value="${item.binLocation||item.shelf||''}">
+            </div>
+            <div class="form-group">
+              <label>Total Shelf Life (วัน)</label>
+              <input type="number" id="sapShelfLife" value="${item.totalShelfLife||0}" min="0">
+            </div>
+            <div class="form-group">
+              <label>Storage Conditions</label>
+              <input type="text" id="sapStoreCond" value="${item.storageConditions||''}" placeholder="เช่น: อุณหภูมิห้อง">
+            </div>
+            <div class="form-group">
+              <label>Temperature Conditions</label>
+              <input type="text" id="sapTempCond" value="${item.temperatureConditions||''}" placeholder="เช่น: 15-25°C">
+            </div>
+            <div class="form-group">
+              <label>Container Requirements</label>
+              <input type="text" id="sapContainer" value="${item.containerRequirements||''}">
+            </div>
+          </div>
+        </div>
+        
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-secondary" onclick="closeModal('sapMasterModal')">ยกเลิก</button>
+        ${!isNew?'<button class="btn btn-danger" onclick="deleteSAPItem()">🗑️ ลบ</button>':''}
+        <button class="btn btn-primary" onclick="saveSAPItem(${isNew})">${isNew?'➕ เพิ่ม':'💾 บันทึก'}</button>
+      </div>
+    </div>
+  `;
+  
+  document.body.appendChild(modal);
+  
+  // Initialize tab switching
+  window.switchSAPTab = function(tab, el) {
+    ['sapTabBasic','sapTabMRP','sapTabPurchasing','sapTabAccounting','sapTabSales','sapTabWarehouse'].forEach(function(id){
+      var elem = document.getElementById(id);
+      if(elem) elem.style.display = 'none';
+    });
+    document.querySelectorAll('#sapMasterModal .tab').forEach(function(t){t.classList.remove('active');});
+    if(el) el.classList.add('active');
+    var target = document.getElementById('sapTab'+tab.charAt(0).toUpperCase()+tab.slice(1));
+    if(target) target.style.display = 'block';
+  };
+};
+
+// Save SAP Item
+window.saveSAPItem = function(isNew) {
+  var code = document.getElementById('sapCode').value.trim();
+  var name = document.getElementById('sapName').value.trim();
+  
+  if(!code || !name) {
+    showToast('กรุณากรอกรหัสและชื่อสินค้า','error');
+    return;
+  }
+  
+  if(isNew && DB.find(function(i){return i.code===code;})) {
+    showToast('รหัสสินค้านี้มีอยู่แล้ว','error');
+    return;
+  }
+  
+  var item = {
+    code: code,
+    name: name,
+    
+    // Basic
+    unit: document.getElementById('sapUnit').value || 'PCS',
+    materialType: document.getElementById('sapMatType').value,
+    materialGroup: document.getElementById('sapMatGroup').value,
+    abc: document.getElementById('sapABC').value,
+    plant: document.getElementById('sapPlant').value,
+    storageLocation: document.getElementById('sapSLoc').value,
+    oldMaterialNumber: document.getElementById('sapOldCode').value,
+    
+    // MRP
+    mrpType: document.getElementById('sapMRPType').value,
+    mrpController: document.getElementById('sapMRPCtrl').value,
+    lotSizingProcedure: document.getElementById('sapLotSize').value,
+    minimumLotSize: parseFloat(document.getElementById('sapMinLot').value) || 0,
+    maximumLotSize: parseFloat(document.getElementById('sapMaxLot').value) || 0,
+    fixedLotSize: parseFloat(document.getElementById('sapFixLot').value) || 0,
+    roundingValue: parseFloat(document.getElementById('sapRound').value) || 0,
+    safetyStock: parseFloat(document.getElementById('sapSafety').value) || 0,
+    reorderPoint: parseFloat(document.getElementById('sapROP').value) || 0,
+    leadTime: parseFloat(document.getElementById('sapLeadTime').value) || 0,
+    inHouseProductionTime: parseFloat(document.getElementById('sapProdTime').value) || 0,
+    assemblyScrapPercent: parseFloat(document.getElementById('sapScrap').value) || 0,
+    
+    // Purchasing
+    procurementType: document.getElementById('sapProcType').value,
+    purchasingGroup: document.getElementById('sapPurchGrp').value,
+    vendorCode: document.getElementById('sapVendor').value,
+    manufacturer: document.getElementById('sapMfr').value,
+    manufacturerPartNumber: document.getElementById('sapMPN').value,
+    standardPrice: parseFloat(document.getElementById('sapStdPrice').value) || 0,
+    price: parseFloat(document.getElementById('sapStdPrice').value) || 0,
+    moq: parseInt(document.getElementById('sapMOQ').value) || 1,
+    priceUnit: parseFloat(document.getElementById('sapPriceUnit').value) || 1,
+    
+    // Accounting
+    valuationClass: document.getElementById('sapValClass').value,
+    priceControl: document.getElementById('sapPriceCtrl').value,
+    movingAveragePrice: parseFloat(document.getElementById('sapMAP').value) || 0,
+    costingLotSize: parseFloat(document.getElementById('sapCostLot').value) || 0,
+    varianceKey: document.getElementById('sapVarKey').value,
+    
+    // Sales
+    salesOrganization: document.getElementById('sapSalesOrg').value,
+    distributionChannel: document.getElementById('sapDistChan').value,
+    salesUnit: document.getElementById('sapSalesUnit').value,
+    minimumOrderQuantity: parseFloat(document.getElementById('sapMinOrder').value) || 1,
+    itemGroup: document.getElementById('sapItemGroup').value,
+    
+    // Warehouse
+    oh: parseFloat(document.getElementById('sapOH').value) || 0,
+    binLocation: document.getElementById('sapBin').value,
+    shelf: document.getElementById('sapBin').value,
+    totalShelfLife: parseFloat(document.getElementById('sapShelfLife').value) || 0,
+    storageConditions: document.getElementById('sapStoreCond').value,
+    temperatureConditions: document.getElementById('sapTempCond').value,
+    containerRequirements: document.getElementById('sapContainer').value,
+    
+    // Additional
+    vol: 0,
+    tn: 0,
+    avg: 0,
+    total: 0,
+    monthly: Array(12).fill(0),
+    lastModified: new Date().toISOString(),
+    createdDate: isNew ? new Date().toISOString().slice(0,10) : (DB.find(function(i){return i.code===code;})||{}).createdDate
+  };
+  
+  // Calculate volume
+  item.vol = Math.round(item.oh * item.price);
+  
+  if(isNew) {
+    DB.push(item);
+  } else {
+    var idx = DB.findIndex(function(i){return i.code===code;});
+    if(idx >= 0) {
+      DB[idx] = Object.assign({}, DB[idx], item);
+    }
+  }
+  
+  saveLocal();
+  closeModal('sapMasterModal');
+  filterMaster();
+  filterStock();
+  renderDashboard();
+  showToast('✅ '+(isNew?'เพิ่ม':'อัพเดท')+'ข้อมูลสำเร็จ','success');
+};
+
+window.deleteSAPItem = function() {
+  var code = document.getElementById('sapCode').value;
+  if(!confirm('ยืนยันการลบ '+code+' ?')) return;
+  var idx = DB.findIndex(function(i){return i.code===code;});
+  if(idx >= 0) {
+    DB.splice(idx, 1);
+    saveLocal();
+    closeModal('sapMasterModal');
+    filterMaster();
+    filterStock();
+    renderDashboard();
+    showToast('ลบข้อมูลแล้ว','success');
+  }
+};
+
+console.log('✅ SAP Master Data enhancement loaded');
+</script>
+
+<!-- Label Layout Grid Selector -->
+<script>
+window.initLabelLayoutGrid = function() {
+  // Add to barcode settings panel
+  var bcSettings = document.querySelector('#masterTabBarcode .table-card');
+  if (!bcSettings) return;
+  
+  var layoutHTML = '<div class="form-group" style="margin-top:12px"><label>รูปแบบการจัดวาง Label บนกระดาษ</label>'+
+    '<div id="labelLayoutGrid" style="display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-top:8px"></div></div>';
+  
+  // Insert before font size control
+  var fontControl = document.getElementById('bcFontSize');
+  if (fontControl && fontControl.parentElement && fontControl.parentElement.parentElement) {
+    var container = document.createElement('div');
+    container.innerHTML = layoutHTML;
+    fontControl.parentElement.parentElement.insertBefore(container.firstChild, fontControl.parentElement);
+  }
+  
+  populateLabelLayouts();
+};
+
+function populateLabelLayouts() {
+  var container = document.getElementById('labelLayoutGrid');
+  if (!container) return;
+  
+  var layouts = [
+    {cols: 1, rows: 1, label: '1×1', size: 'shelf'},
+    {cols: 2, rows: 1, label: '2×1', size: 'large'},
+    {cols: 3, rows: 1, label: '3×1', size: 'medium'},
+    {cols: 4, rows: 1, label: '4×1', size: 'small'},
+    {cols: 2, rows: 2, label: '2×2', size: 'large'},
+    {cols: 3, rows: 2, label: '3×2', size: 'medium'},
+    {cols: 4, rows: 2, label: '4×2', size: 'small'},
+    {cols: 3, rows: 3, label: '3×3', size: 'medium'},
+    {cols: 4, rows: 3, label: '4×3', size: 'small'},
+    {cols: 4, rows: 4, label: '4×4', size: 'small'},
+    {cols: 2, rows: 3, label: '2×3', size: 'large'},
+    {cols: 3, rows: 4, label: '3×4', size: 'medium'}
+  ];
+  
+  container.innerHTML = layouts.map(function(layout, idx) {
+    var isDefault = layout.cols === 3 && layout.rows === 1;
+    return '<div class="layout-option" data-cols="'+layout.cols+'" data-rows="'+layout.rows+'" data-size="'+layout.size+'" '+
+      'onclick="selectLabelLayout(this,'+layout.cols+','+layout.rows+',\''+layout.size+'\')" '+
+      'style="border:2px solid '+(isDefault?'var(--accent)':'var(--border)')+';border-radius:6px;padding:6px;cursor:pointer;'+
+      'transition:.2s;background:'+(isDefault?'rgba(0,102,204,.08)':'var(--bg4)')+';min-height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center">'+
+      '<div style="font-size:10px;font-weight:600;margin-bottom:3px;color:var(--text2)">'+layout.label+'</div>'+
+      '<div style="display:grid;grid-template-columns:repeat('+Math.min(layout.cols,4)+',1fr);gap:1px;width:100%">'+
+      Array(Math.min(layout.cols * layout.rows, 16)).fill(0).map(function(){
+        return '<div style="background:var(--border);aspect-ratio:1;border-radius:1px"></div>';
+      }).join('')+
+      '</div></div>';
+  }).join('');
+}
+
+window.selectLabelLayout = function(el, cols, rows, size) {
+  document.querySelectorAll('.layout-option').forEach(function(opt){
+    opt.style.borderColor = 'var(--border)';
+    opt.style.background = 'var(--bg4)';
+  });
+  el.style.borderColor = 'var(--accent)';
+  el.style.background = 'rgba(0,102,204,.08)';
+  
+  var bcSize = document.getElementById('bcSize');
+  if (bcSize) {
+    bcSize.value = size;
+  }
+  
+  if (typeof renderBarcodePreview === 'function') {
+    renderBarcodePreview();
+  }
+  
+  showToast('เลือกรูปแบบ: '+cols+'×'+rows+' ('+size+')','success');
+};
+
+// Initialize on barcode tab shown
+setTimeout(function() {
+  if (typeof initBarcodeTab === 'function') {
+    var originalInit = initBarcodeTab;
+    initBarcodeTab = function() {
+      originalInit.call(this);
+      setTimeout(initLabelLayoutGrid, 100);
+    };
+  }
+}, 1000);
+</script>
+
+<!-- Enhanced Mobile Menu Toggle -->
+<script>
+(function() {
+  // Add mobile menu button functionality
+  var mobileBtn = document.querySelector('.mobile-menu-btn');
+  var sidebar = document.querySelector('.sidebar');
+  var overlay = document.querySelector('.mobile-overlay');
+  
+  if (mobileBtn && sidebar) {
+    mobileBtn.addEventListener('click', function() {
+      sidebar.classList.toggle('open');
+      if (overlay) overlay.classList.toggle('show');
+    });
+  }
+  
+  if (overlay) {
+    overlay.addEventListener('click', function() {
+      sidebar.classList.remove('open');
+      overlay.classList.remove('show');
+    });
+  }
+  
+  // Close sidebar when nav item clicked on mobile
+  if (window.innerWidth <= 768) {
+    document.querySelectorAll('.nav-item').forEach(function(item) {
+      item.addEventListener('click', function() {
+        if (sidebar) sidebar.classList.remove('open');
+        if (overlay) overlay.classList.remove('show');
+      });
+    });
+  }
+  
+  console.log('✅ Mobile menu enhanced');
+})();
+</script>
+
+<!-- Link SAP Master to Master Data menu -->
+<script>
+// Replace openAddItem with SAP editor
+if (typeof openAddItem !== 'undefined') {
+  window.openAddItemOriginal = openAddItem;
+}
+window.openAddItem = function() {
+  if (typeof openSAPMasterDataEditor === 'function') {
+    openSAPMasterDataEditor();
+  } else if (typeof openAddItemOriginal === 'function') {
+    openAddItemOriginal();
+  }
+};
+
+// Replace openEditItem with SAP editor
+if (typeof openEditItem !== 'undefined') {
+  window.openEditItemOriginal = openEditItem;
+}
+window.openEditItem = function(code) {
+  if (typeof openSAPMasterDataEditor === 'function') {
+    openSAPMasterDataEditor(code);
+  } else if (typeof openEditItemOriginal === 'function') {
+    openEditItemOriginal(code);
+  }
+};
+
+console.log('✅ SAP Master Data integrated with Master menu');
+</script>
+
 </body>
 </html>
